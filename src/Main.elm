@@ -21,15 +21,7 @@ type alias Model =
     }
 
 
-type alias Product =
-    String
-
-
-type alias Flags =
-    ()
-
-
-init : Flags -> Return Msg Model
+init : () -> Return Msg Model
 init _ =
     Return.singleton { reviewsFile = Nothing }
 
@@ -63,7 +55,7 @@ view model =
         )
 
 
-main : Platform.Program Flags Model Msg
+main : Platform.Program () Model Msg
 main =
     Browser.element
         { init = init
