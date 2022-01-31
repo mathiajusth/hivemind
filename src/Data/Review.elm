@@ -1,4 +1,4 @@
-module Data.Review exposing (Review)
+module Data.Review exposing (Review, decoder)
 
 import Data.Product as Product
 import Data.Rating as Rating exposing (Rating)
