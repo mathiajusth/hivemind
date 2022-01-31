@@ -1,1 +1,6 @@
-/elm-stuff
+elm-stuff
+
+node_modules
+
+/* vim backup files  */
+*.sw*
