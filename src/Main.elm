@@ -10,6 +10,7 @@ import File.Select as Select
 import GenericDict as Dict exposing (Dict)
 import Html exposing (Html)
 import Json.Decode as Decode
+import Library.DatePicker as DatePicker
 import Library.Id as Id
 import List.Extra as List
 import Maybe.Extra as Maybe
@@ -29,7 +30,9 @@ type alias Model =
 
 init : () -> Return Msg Model
 init _ =
-    Return.singleton { reviewsFile = Nothing }
+    { reviewsFile = Nothing
+    }
+        |> Return.singleton
 
 
 type Msg
