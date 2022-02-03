@@ -46,7 +46,7 @@ userValidation =
         |> Validate.field
             (\input -> ( input.heightMeter, input.weightKilogram ))
             (Validate.tuple ( floatValidation, floatValidation )
-                |> Validate.compose (Validate.map toBmi)
+                |> Validate.compose (Validate.lift toBmi)
                 |> Validate.compose (Validate.floatIsLowerThan 40)
             )
         |> Validate.field identity (Validate.succeed True)

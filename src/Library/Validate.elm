@@ -30,8 +30,8 @@ compose fromB fromA =
     fromA >> Result.andThen fromB
 
 
-map : (a -> b) -> Validation e a b
-map f =
+lift : (a -> b) -> Validation e a b
+lift f =
     {- Mapping functions to the Result monad's Kleisi category -}
     Ok << f
 
@@ -190,7 +190,7 @@ maybe justValidate =
     Maybe.unwrap
         (accept Nothing)
         (justValidate
-            |> compose (map Just)
+            |> compose (lift Just)
         )
 
 
