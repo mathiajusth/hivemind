@@ -21,6 +21,7 @@ import Return exposing (Return)
 import Task
 import Time
 import Time.Extra as Time
+import Ui.Button as Button
 import Ui.DatePicker as DatePicker
 import Ui.Input as Input
 
@@ -199,15 +200,20 @@ view model =
         (E.column [ E.centerX, E.spacing 10, E.padding 40 ]
             [ Maybe.unwrap
                 -- TODO make a wrapper for button
-                (Input.button []
-                    { onPress = Just UploadFileClicked
-                    , label = E.text "Upload Reviews"
-                    }
+                (Button.view
+                    (Button.default "Upload Reviews"
+                        |> Button.onClick UploadFileClicked
+                    )
                 )
                 (\{ name } ->
                     E.column [ E.spacing 30 ]
                         [ E.row [ E.spacing 10 ]
-                            [ E.text name, Input.button [] { onPress = Just RemoveFileClicked, label = E.text "X" } ]
+                            [ E.text name
+                            , Button.view
+                                (Button.default "X"
+                                    |> Button.onClick RemoveFileClicked
+                                )
+                            ]
                         , DatePicker.view
                             (DatePicker.default
                                 { label = "Pick a starting date" }
@@ -231,7 +237,7 @@ view model =
                         , Input.view
                             (Input.default
                                 { onChange = MinNumberReviewsChanged
-                                , text = model.query.limit
+                                , text = model.query.minNumberReviews
                                 , label = "Minimun number of reviews"
                                 }
                             )
