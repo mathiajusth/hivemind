@@ -12,7 +12,7 @@ error maybeErrorText element =
         , E.el
             [ -- This should be done with use of E.below
               -- but elm-ui-datepicker uses E.below as well for the calendar.
-              -- And they overlap non-nicely
+              -- And they overlap non-nicely.
               -- These are properties that E.below uses with change of z-indx from 20 ~> -1.
               E.htmlAttribute <| HtmlAttributes.style "position" "absolute"
             , E.htmlAttribute <| HtmlAttributes.style "bottom" "0"

@@ -10,6 +10,7 @@ import File exposing (File)
 import File.Select as Select
 import GenericDict as Dict exposing (Dict)
 import Html exposing (Html)
+import Html.Attributes as HtmlAttributes
 import Json.Decode as Decode
 import Library.Id as Id
 import Library.Time.Extra as Time
@@ -245,6 +246,7 @@ view model =
                                         (Button.default "X"
                                             |> Button.onClick RemoveFileClicked
                                         )
+                                        |> E.el [ E.htmlAttribute <| HtmlAttributes.title "Remove file" ]
                                     ]
                                 , DatePicker.view
                                     (DatePicker.default
