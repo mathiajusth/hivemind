@@ -24,6 +24,7 @@ import Time.Extra as Time
 import Ui.Button as Button
 import Ui.DatePicker as DatePicker
 import Ui.Input as Input
+import Ui.WithError as WithError
 
 
 
@@ -37,7 +38,8 @@ type alias Model =
             , content : Result Decode.Error (Dict Product.Id (List Review))
             }
     , zone : Maybe Time.Zone
-    , query : QueryForm
+    , queryForm : QueryForm
+    , showValidationErrors : Bool
     }
 
 
@@ -46,12 +48,13 @@ init _ =
     Return.return
         { reviewsFile = Nothing
         , zone = Nothing
-        , query =
+        , queryForm =
             { start = DatePicker.initWithoutToday
             , end = DatePicker.initWithoutToday
             , limit = ""
             , minNumberReviews = ""
             }
+        , showValidationErrors = False
         }
         (Task.perform ZoneRecieved Time.here)
         |> Return.command (Task.perform TodayRecieved Date.today)
@@ -79,21 +82,32 @@ type alias Query =
 
 validateQuery : Time.Zone -> Validate.RecordValidation String QueryForm Query
 validateQuery usersZone =
+    let
+        correctDateNotProvidedErrorText : String
+        correctDateNotProvidedErrorText =
+            "Required in ISO format: YYYY-MM-DD"
+    in
     Validate.record Query
         |> Validate.field .start
             (Validate.lift DatePicker.getDate
-                |> Validate.compose Validate.fromMaybe
+                |> Validate.compose (Validate.fromMaybe_ correctDateNotProvidedErrorText)
                 |> Validate.compose
                     (Validate.lift (Time.fromDate Time.StartOfDay usersZone))
             )
         |> Validate.field .end
             (Validate.lift DatePicker.getDate
-                |> Validate.compose Validate.fromMaybe
+                |> Validate.compose (Validate.fromMaybe_ correctDateNotProvidedErrorText)
                 |> Validate.compose
                     (Validate.lift (Time.fromDate Time.EndOfDay usersZone))
             )
-        |> Validate.field .limit Validate.toInt
-        |> Validate.field .minNumberReviews Validate.toInt
+        |> Validate.field .limit
+            (Validate.isNotEmptyString
+                |> Validate.compose Validate.toInt
+            )
+        |> Validate.field .minNumberReviews
+            (Validate.isNotEmptyString
+                |> Validate.compose Validate.toInt
+            )
         |> Validate.endRecord
 
 
@@ -116,10 +130,11 @@ type FormMsg
     | EndDatePickerMsg DatePicker.Msg
     | LimitChanged String
     | MinNumberReviewsChanged String
+    | RunQueryClicked (Validate.ValidatedRecord String Query)
 
 
 update : Msg -> Model -> Return Msg Model
-update msg ({ query } as model) =
+update msg ({ queryForm } as model) =
     case msg of
         ZoneRecieved zone ->
             { model | zone = Just zone }
@@ -127,13 +142,13 @@ update msg ({ query } as model) =
 
         TodayRecieved today ->
             { model
-                | query =
-                    { query
+                | queryForm =
+                    { queryForm
                         | start =
-                            query.start
+                            queryForm.start
                                 |> DatePicker.setToday today
                         , end =
-                            query.end
+                            queryForm.end
                                 |> DatePicker.setToday today
                     }
             }
@@ -176,21 +191,31 @@ update msg ({ query } as model) =
         FormMsg formMsg ->
             case formMsg of
                 StartDatePickerMsg datePickerMsg ->
-                    DatePicker.update datePickerMsg query.start
+                    DatePicker.update datePickerMsg queryForm.start
                         |> Return.mapBoth (StartDatePickerMsg >> FormMsg)
-                            (\newState -> { model | query = { query | start = newState } })
+                            (\newState -> { model | queryForm = { queryForm | start = newState } })
 
                 EndDatePickerMsg datePickerMsg ->
-                    DatePicker.update datePickerMsg query.end
+                    DatePicker.update datePickerMsg queryForm.end
                         |> Return.mapBoth (EndDatePickerMsg >> FormMsg)
-                            (\newState -> { model | query = { query | end = newState } })
+                            (\newState -> { model | queryForm = { queryForm | end = newState } })
 
                 LimitChanged string ->
-                    { model | query = { query | limit = string } }
+                    { model | queryForm = { queryForm | limit = string } }
                         |> Return.singleton
 
                 MinNumberReviewsChanged string ->
-                    { model | query = { query | minNumberReviews = string } }
+                    { model | queryForm = { queryForm | minNumberReviews = string } }
+                        |> Return.singleton
+
+                RunQueryClicked validatedQuery ->
+                    Result.unwrap
+                        { model | showValidationErrors = True }
+                        (\query ->
+                            -- TODO
+                            model
+                        )
+                        validatedQuery
                         |> Return.singleton
 
 
@@ -206,43 +231,62 @@ view model =
                     )
                 )
                 (\{ name } ->
-                    E.column [ E.spacing 30 ]
-                        [ E.row [ E.spacing 10 ]
-                            [ E.text name
-                            , Button.view
-                                (Button.default "X"
-                                    |> Button.onClick RemoveFileClicked
-                                )
-                            ]
-                        , DatePicker.view
-                            (DatePicker.default
-                                { label = "Pick a starting date" }
-                            )
-                            model.query.start
-                            |> E.map (StartDatePickerMsg >> FormMsg)
-                        , DatePicker.view
-                            (DatePicker.default
-                                { label = "Pick an ending date" }
-                            )
-                            model.query.end
-                            |> E.map (EndDatePickerMsg >> FormMsg)
-                        , Input.view
-                            (Input.default
-                                { onChange = LimitChanged
-                                , text = model.query.limit
-                                , label = "Number of results to show"
-                                }
-                            )
-                            |> E.map FormMsg
-                        , Input.view
-                            (Input.default
-                                { onChange = MinNumberReviewsChanged
-                                , text = model.query.minNumberReviews
-                                , label = "Minimun number of reviews"
-                                }
-                            )
-                            |> E.map FormMsg
-                        ]
+                    Maybe.unwrap E.none
+                        (\zone ->
+                            let
+                                validatedQuery : Validate.ValidatedRecord String Query
+                                validatedQuery =
+                                    validateQuery zone model.queryForm
+                            in
+                            E.column [ E.spacing 42 ]
+                                [ E.row [ E.spacing 10 ]
+                                    [ E.text name
+                                    , Button.view
+                                        (Button.default "X"
+                                            |> Button.onClick RemoveFileClicked
+                                        )
+                                    ]
+                                , DatePicker.view
+                                    (DatePicker.default
+                                        { label = "Pick a starting date" }
+                                    )
+                                    model.queryForm.start
+                                    |> E.map (StartDatePickerMsg >> FormMsg)
+                                    |> WithError.error (Validate.getFieldErrorIf model.showValidationErrors 0 validatedQuery)
+                                , DatePicker.view
+                                    (DatePicker.default
+                                        { label = "Pick an ending date" }
+                                    )
+                                    model.queryForm.end
+                                    |> E.map (EndDatePickerMsg >> FormMsg)
+                                    |> WithError.error (Validate.getFieldErrorIf model.showValidationErrors 1 validatedQuery)
+                                , Input.view
+                                    (Input.default
+                                        { onChange = LimitChanged
+                                        , text = model.queryForm.limit
+                                        , label = "Number of results to show"
+                                        }
+                                    )
+                                    |> E.map FormMsg
+                                    |> WithError.error (Validate.getFieldErrorIf model.showValidationErrors 2 validatedQuery)
+                                , Input.view
+                                    (Input.default
+                                        { onChange = MinNumberReviewsChanged
+                                        , text = model.queryForm.minNumberReviews
+                                        , label = "Minimun number of reviews"
+                                        }
+                                    )
+                                    |> E.map FormMsg
+                                    |> WithError.error (Validate.getFieldErrorIf model.showValidationErrors 3 validatedQuery)
+                                , Button.view
+                                    (Button.default "Run Query"
+                                        |> Button.onClick (RunQueryClicked validatedQuery)
+                                    )
+                                    |> E.map FormMsg
+                                    |> E.el [ E.alignRight ]
+                                ]
+                        )
+                        model.zone
                 )
                 model.reviewsFile
             ]

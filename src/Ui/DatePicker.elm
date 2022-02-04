@@ -37,6 +37,7 @@ import DatePicker
 import Either exposing (Either)
 import Element as E exposing (Element)
 import Element.Input as Input
+import Result.Extra as Result
 import Return exposing (Return)
 import Task
 import Ui.Label as Label
@@ -136,7 +137,7 @@ update msg (Model model) =
                             | date =
                                 text
                                     |> Date.fromIsoString
-                                    |> Either.fromResult
+                                    |> Result.unwrap (Either.Left text) Either.Right
                         }
                         |> Return.singleton
 
