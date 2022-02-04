@@ -20,6 +20,8 @@ error maybeErrorText element =
             , E.htmlAttribute <| HtmlAttributes.style "height" "0"
             , E.htmlAttribute <| HtmlAttributes.style "width" "100%"
             , E.htmlAttribute <| HtmlAttributes.style "z-index" "-1"
+
+            -- TODO style
             ]
           <|
             E.text (Maybe.unwrap "" ((++) "*") maybeErrorText)

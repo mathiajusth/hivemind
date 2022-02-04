@@ -23,7 +23,7 @@ default text =
 view : ViewConfig -> Input.Placeholder msg
 view (ViewConfig config) =
     Input.placeholder
-        [-- TODO
+        [-- TODO style
         ]
     <|
         E.text config.text

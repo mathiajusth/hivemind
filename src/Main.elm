@@ -176,8 +176,6 @@ update msg ({ queryForm } as model) =
                                 |> String.lines
                                 |> List.map (Decode.decodeString Review.decoder)
                                 |> Result.combine
-                                |> Result.map
-                                    (Debug.log "")
                                 |> Result.map (List.groupEqualsBy .productID)
                         }
             }
@@ -280,19 +278,11 @@ view model =
                                 , if model.showResponseOrErrors then
                                     Result.unwrap E.none
                                         (\query ->
-                                            let
-                                                x =
-                                                    Debug.log "" ( Date.toIsoString query.start, Date.toIsoString query.end )
-                                            in
                                             Maybe.unwrap E.none
                                                 (\zone ->
                                                     groupedReviews
                                                         |> List.filterGroupMembers
                                                             (\review ->
-                                                                let
-                                                                    y =
-                                                                        Debug.log (Id.toString review.productID) <| Date.toIsoString <| Date.fromPosix zone review.time
-                                                                in
                                                                 Date.isBetween
                                                                     query.start
                                                                     query.end

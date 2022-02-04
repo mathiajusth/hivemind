@@ -59,7 +59,8 @@ hideLabel config =
 view : ViewConfig msg -> Element msg
 view (ViewConfig config) =
     Input.text
-        [-- TODO
+        [-- TODO style
+         -- TODO add possibilty to define input type number
         ]
         { onChange = config.onChange
         , text = config.text

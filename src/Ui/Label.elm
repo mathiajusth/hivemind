@@ -56,7 +56,7 @@ view (ViewConfig config) =
     let
         labelStyle : List (E.Attribute msg)
         labelStyle =
-            [-- TODO
+            [-- TODO style
             ]
     in
     case config.position of
