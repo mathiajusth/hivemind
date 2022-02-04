@@ -1,4 +1,4 @@
-module Data.Rating exposing (Rating, decoder)
+module Data.Rating exposing (Rating, average, decoder)
 
 import Json.Decode as Decode
 import Json.Decode.Extra as Decode

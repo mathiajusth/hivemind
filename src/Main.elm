@@ -2,9 +2,10 @@ module Main exposing (..)
 
 import Browser as Browser
 import Data.Product as Product
+import Data.Rating as Rating
 import Data.Review as Review exposing (Review)
 import Date exposing (Date)
-import Element as E
+import Element as E exposing (Element)
 import Element.Input as Input
 import File exposing (File)
 import File.Select as Select
@@ -13,12 +14,14 @@ import Html exposing (Html)
 import Html.Attributes as HtmlAttributes
 import Json.Decode as Decode
 import Library.Id as Id
-import Library.Time.Extra as Time
+import Library.List.Extra as List
 import Library.Validate as Validate exposing (Validation)
 import List.Extra as List
+import List.Nonempty as NonemptyList
 import Maybe.Extra as Maybe
 import Result.Extra as Result
 import Return exposing (Return)
+import Round
 import Task
 import Time
 import Time.Extra as Time
@@ -36,11 +39,11 @@ type alias Model =
     { reviewsFile :
         Maybe
             { name : String
-            , content : Result Decode.Error (Dict Product.Id (List Review))
+            , content : Result Decode.Error (List.Grouped Review)
             }
     , zone : Maybe Time.Zone
     , queryForm : QueryForm
-    , showValidationErrors : Bool
+    , showResponseOrErrors : Bool
     }
 
 
@@ -55,7 +58,7 @@ init _ =
             , limit = ""
             , minNumberReviews = ""
             }
-        , showValidationErrors = False
+        , showResponseOrErrors = False
         }
         (Task.perform ZoneRecieved Time.here)
         |> Return.command (Task.perform TodayRecieved Date.today)
@@ -74,15 +77,15 @@ type alias QueryForm =
 
 
 type alias Query =
-    { start : Time.Posix
-    , end : Time.Posix
+    { start : Date
+    , end : Date
     , limit : Int
     , minNumberReviews : Int
     }
 
 
-validateQuery : Time.Zone -> Validate.RecordValidation String QueryForm Query
-validateQuery usersZone =
+validateQuery : Validate.RecordValidation String QueryForm Query
+validateQuery =
     let
         correctDateNotProvidedErrorText : String
         correctDateNotProvidedErrorText =
@@ -92,14 +95,10 @@ validateQuery usersZone =
         |> Validate.field .start
             (Validate.lift DatePicker.getDate
                 |> Validate.compose (Validate.fromMaybe_ correctDateNotProvidedErrorText)
-                |> Validate.compose
-                    (Validate.lift (Time.fromDate Time.StartOfDay usersZone))
             )
         |> Validate.field .end
             (Validate.lift DatePicker.getDate
                 |> Validate.compose (Validate.fromMaybe_ correctDateNotProvidedErrorText)
-                |> Validate.compose
-                    (Validate.lift (Time.fromDate Time.EndOfDay usersZone))
             )
         |> Validate.field .limit
             (Validate.isNotEmptyString
@@ -131,7 +130,7 @@ type FormMsg
     | EndDatePickerMsg DatePicker.Msg
     | LimitChanged String
     | MinNumberReviewsChanged String
-    | RunQueryClicked (Validate.ValidatedRecord String Query)
+    | ShowClicked
 
 
 update : Msg -> Model -> Return Msg Model
@@ -170,17 +169,16 @@ update msg ({ queryForm } as model) =
                         { name = fileName
                         , content =
                             ndJsonString
+                                -- when loading the file "\n"
+                                -- was always inserted at the end of the file
+                                -- don't know why but hence the trim
+                                |> String.trim
                                 |> String.lines
                                 |> List.map (Decode.decodeString Review.decoder)
                                 |> Result.combine
                                 |> Result.map
-                                    (List.gatherEqualsBy .productID
-                                        >> List.map
-                                            (\( first, others ) ->
-                                                ( first.productID, first :: others )
-                                            )
-                                        >> Dict.fromList Id.toString
-                                    )
+                                    (Debug.log "")
+                                |> Result.map (List.groupEqualsBy .productID)
                         }
             }
                 |> Return.singleton
@@ -209,14 +207,8 @@ update msg ({ queryForm } as model) =
                     { model | queryForm = { queryForm | minNumberReviews = string } }
                         |> Return.singleton
 
-                RunQueryClicked validatedQuery ->
-                    Result.unwrap
-                        { model | showValidationErrors = True }
-                        (\query ->
-                            -- TODO
-                            model
-                        )
-                        validatedQuery
+                ShowClicked ->
+                    { model | showResponseOrErrors = True }
                         |> Return.singleton
 
 
@@ -225,19 +217,18 @@ view model =
     E.layout []
         (E.column [ E.centerX, E.spacing 10, E.padding 40 ]
             [ Maybe.unwrap
-                -- TODO make a wrapper for button
                 (Button.view
                     (Button.default "Upload Reviews"
                         |> Button.onClick UploadFileClicked
                     )
                 )
-                (\{ name } ->
-                    Maybe.unwrap E.none
-                        (\zone ->
+                (\{ name, content } ->
+                    Result.unpack (\parsingError -> E.text <| "Error parsing file: " ++ Decode.errorToString parsingError)
+                        (\groupedReviews ->
                             let
                                 validatedQuery : Validate.ValidatedRecord String Query
                                 validatedQuery =
-                                    validateQuery zone model.queryForm
+                                    validateQuery model.queryForm
                             in
                             E.column [ E.spacing 42 ]
                                 [ E.row [ E.spacing 10 ]
@@ -254,14 +245,14 @@ view model =
                                     )
                                     model.queryForm.start
                                     |> E.map (StartDatePickerMsg >> FormMsg)
-                                    |> WithError.error (Validate.getFieldErrorIf model.showValidationErrors 0 validatedQuery)
+                                    |> WithError.error (Validate.getFieldErrorIf model.showResponseOrErrors 0 validatedQuery)
                                 , DatePicker.view
                                     (DatePicker.default
                                         { label = "Pick an ending date" }
                                     )
                                     model.queryForm.end
                                     |> E.map (EndDatePickerMsg >> FormMsg)
-                                    |> WithError.error (Validate.getFieldErrorIf model.showValidationErrors 1 validatedQuery)
+                                    |> WithError.error (Validate.getFieldErrorIf model.showResponseOrErrors 1 validatedQuery)
                                 , Input.view
                                     (Input.default
                                         { onChange = LimitChanged
@@ -270,7 +261,7 @@ view model =
                                         }
                                     )
                                     |> E.map FormMsg
-                                    |> WithError.error (Validate.getFieldErrorIf model.showValidationErrors 2 validatedQuery)
+                                    |> WithError.error (Validate.getFieldErrorIf model.showResponseOrErrors 2 validatedQuery)
                                 , Input.view
                                     (Input.default
                                         { onChange = MinNumberReviewsChanged
@@ -279,19 +270,86 @@ view model =
                                         }
                                     )
                                     |> E.map FormMsg
-                                    |> WithError.error (Validate.getFieldErrorIf model.showValidationErrors 3 validatedQuery)
+                                    |> WithError.error (Validate.getFieldErrorIf model.showResponseOrErrors 3 validatedQuery)
                                 , Button.view
-                                    (Button.default "Run Query"
-                                        |> Button.onClick (RunQueryClicked validatedQuery)
+                                    (Button.default "Show"
+                                        |> Button.onClick ShowClicked
                                     )
                                     |> E.map FormMsg
                                     |> E.el [ E.alignRight ]
+                                , if model.showResponseOrErrors then
+                                    Result.unwrap E.none
+                                        (\query ->
+                                            let
+                                                x =
+                                                    Debug.log "" ( Date.toIsoString query.start, Date.toIsoString query.end )
+                                            in
+                                            Maybe.unwrap E.none
+                                                (\zone ->
+                                                    groupedReviews
+                                                        |> List.filterGroupMembers
+                                                            (\review ->
+                                                                let
+                                                                    y =
+                                                                        Debug.log (Id.toString review.productID) <| Date.toIsoString <| Date.fromPosix zone review.time
+                                                                in
+                                                                Date.isBetween
+                                                                    query.start
+                                                                    query.end
+                                                                    (Date.fromPosix zone review.time)
+                                                            )
+                                                        |> List.filter
+                                                            (\group ->
+                                                                NonemptyList.length group >= query.minNumberReviews
+                                                            )
+                                                        |> List.map
+                                                            (\group ->
+                                                                let
+                                                                    ratingAverage : Float
+                                                                    ratingAverage =
+                                                                        group
+                                                                            |> NonemptyList.map .rating
+                                                                            |> Rating.average
+                                                                in
+                                                                ( ratingAverage, (NonemptyList.head group).productID )
+                                                            )
+                                                        -- not sure which sorting algorithm
+                                                        -- elm uses by default
+                                                        -- but we probably could
+                                                        -- make this more efficient for small limits
+                                                        -- by folding the list and keeping
+                                                        -- track only of the highes N rating averages
+                                                        -- (N = limit)
+                                                        |> List.sortBy Tuple.first
+                                                        |> List.take query.limit
+                                                        |> viewResults
+                                                )
+                                                model.zone
+                                        )
+                                        validatedQuery
+
+                                  else
+                                    E.none
                                 ]
                         )
-                        model.zone
+                        content
                 )
                 model.reviewsFile
             ]
+        )
+
+
+viewResults : List ( Float, Product.Id ) -> Element msg
+viewResults results =
+    E.column [ E.spacing 20 ]
+        (List.map
+            (\( averageRating, productID ) ->
+                E.column []
+                    [ E.text <| "Product ID :" ++ Id.toString productID
+                    , E.text <| "Average rating: " ++ Round.round 2 averageRating
+                    ]
+            )
+            results
         )
 
 

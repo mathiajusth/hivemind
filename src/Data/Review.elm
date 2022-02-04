@@ -19,9 +19,16 @@ decoder : Decode.Decoder Review
 decoder =
     Decode.succeed Review
         |> Decode.andMap (Decode.field "asin" Id.decoder)
-        |> Decode.andMap (Decode.field "unixReviewTime" Decode.datetime)
         |> Decode.andMap
-            (Decode.field "rating" Rating.decoder
+            (Decode.field "unixReviewTime"
+                (Decode.map
+                    -- comes in seconds, so have to convert to milliseconds
+                    ((*) 1000 >> Time.millisToPosix)
+                    Decode.int
+                )
+            )
+        |> Decode.andMap
+            (Decode.field "overall" Rating.decoder
              -- We are currenly failing if rating is outsied of 1 to 5 range
              -- This can be changed to fail gracefully i.e. just ignore that review
             )
