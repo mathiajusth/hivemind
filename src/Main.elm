@@ -278,6 +278,7 @@ view model =
                                 , if model.showResponseOrErrors then
                                     Result.unwrap E.none
                                         (\query ->
+                                            -- task to get zone never fails so we can show E.none on fail as it never happens
                                             Maybe.unwrap E.none
                                                 (\zone ->
                                                     groupedReviews
@@ -301,16 +302,16 @@ view model =
                                                                             |> NonemptyList.map .rating
                                                                             |> Rating.average
                                                                 in
-                                                                ( ratingAverage, (NonemptyList.head group).productID )
+                                                                { ratingAverage = ratingAverage, productID = (NonemptyList.head group).productID }
                                                             )
                                                         -- not sure which sorting algorithm
                                                         -- elm uses by default
                                                         -- but we probably could
                                                         -- make this more efficient for small limits
                                                         -- by folding the list and keeping
-                                                        -- track only of the highes N rating averages
+                                                        -- track only of the highes N rating averages in the accumulator
                                                         -- (N = limit)
-                                                        |> List.sortBy Tuple.first
+                                                        |> List.sortBy .ratingAverage
                                                         |> List.take query.limit
                                                         |> viewResults
                                                 )
@@ -329,14 +330,14 @@ view model =
         )
 
 
-viewResults : List ( Float, Product.Id ) -> Element msg
+viewResults : List { ratingAverage : Float, productID : Product.Id } -> Element msg
 viewResults results =
     E.column [ E.spacing 20 ]
         (List.map
-            (\( averageRating, productID ) ->
+            (\{ ratingAverage, productID } ->
                 E.column []
                     [ E.text <| "Product ID :" ++ Id.toString productID
-                    , E.text <| "Average rating: " ++ Round.round 2 averageRating
+                    , E.text <| "Average rating: " ++ Round.round 2 ratingAverage
                     ]
             )
             results
