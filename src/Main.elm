@@ -164,7 +164,7 @@ parseFileContent ndJsonString =
         |> Result.map (List.groupEqualsBy .productID)
 
 
-{-| Update function is then constructed so that only exactly adimissible
+{-| Update function is constructed so that only exactly adimissible
 model-msg combinations are handled (exactly because type error will be thrown if
 a msg is added to the correspoonding msg branch due to the usages of "\_"s i.e. non used parameters)
 -}
