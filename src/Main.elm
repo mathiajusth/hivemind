@@ -46,11 +46,11 @@ type alias GlobalData =
     }
 
 
-type
-    GlobalDataLoaded
-    -- This sum type model architecture enrures that only possible states are possible
-    -- while the model is not deeply nested and wrapped in multiple Maybes and Results
-    -- (as it would be if the fileName that is in two branches was not distributed - like * over + but product type over sum type)
+{-| This flat sum type model architecture ensures that only possible states are possible
+while the model is not deeply nested and wrapped in multiple Maybes and Results
+(as it would be if the fileName that is in two branches was not distributed - like \* over + but product type over sum type)
+-}
+type GlobalDataLoaded
     = FileNotUploaded
     | FileParsingInProgress { fileName : String }
     | FileParsingSuccess
