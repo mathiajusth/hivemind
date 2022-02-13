@@ -35,37 +35,39 @@ import Ui.WithError as WithError
 -- MODEL
 
 
-type alias Model =
-    { reviewsFile :
-        Maybe
-            { name : String
-            , content : Result Decode.Error (List.Grouped Review)
-            }
-    , zone : Maybe Time.Zone
-    , queryForm : QueryForm
-    , showResponseOrErrors : Bool
+type Model
+    = LoadingGlobalData
+    | GlobalDataLoaded GlobalData GlobalDataLoaded
+
+
+type alias GlobalData =
+    { zone : Time.Zone
+    , today : Date
     }
+
+
+type
+    GlobalDataLoaded
+    -- This sum type model architecture enrures that only possible states are possible
+    -- while the model is not deeply nested and wrapped in multiple Maybes and Results
+    -- (as it would be if the fileName that is in two branches was not distributed - like * over + but product type over sum type)
+    = FileNotUploaded
+    | FileParsingInProgress { fileName : String }
+    | FileParsingSuccess
+        { fileName : String
+        , groupedReviews : List.Grouped Review
+        , queryForm : QueryForm
+        , showResponseOrErrors : Bool
+        }
+    | FileParsingFailed Decode.Error
 
 
 init : () -> Return Msg Model
 init _ =
-    Return.return
-        { reviewsFile = Nothing
-        , zone = Nothing
-        , queryForm =
-            { start = DatePicker.initWithoutToday
-            , end = DatePicker.initWithoutToday
-            , limit = ""
-            , minNumberReviews = ""
-            }
-        , showResponseOrErrors = False
-        }
-        (Task.perform ZoneRecieved Time.here)
-        |> Return.command (Task.perform TodayRecieved Date.today)
-
-
-
----- Query validation
+    Return.return LoadingGlobalData
+        (Task.map2 GlobalData Time.here Date.today
+            |> Task.perform GlobalDataRecieved
+        )
 
 
 type alias QueryForm =
@@ -113,19 +115,40 @@ validateQuery =
 
 
 -- UPDATE
+-- Messages are divided based on which model's branches' view function
+-- they can be fired from
+-- Update function is then constructed so that only exactly adimissible
+-- model msg combinations are handled (exactly because type error will be thrown if
+-- a msg is added to the correspoonding msg branch due to the usages of "_"s i.e. non used parameters)
 
 
 type Msg
+    = GlobalDataRecieved GlobalData
+    | GlobalDataLoadedMsg GlobalDataLoadedMsg
+
+
+type GlobalDataLoadedMsg
+    = FileNotUploadedMsg FileNotUploadedMsg
+    | FileParsingInProgressMsg FileParsingInProgressMsg
+    | FileParsingSuccessMsg FileParsingSuccessMsg
+    | FileParsingFailedMsg ()
+
+
+
+-- when () replaced by sum type the pattern match in the update function will throw error
+-- so you have to fill in the implementation
+
+
+type FileNotUploadedMsg
     = UploadFileClicked
     | FileUploaded File
-    | FileExtracted String String
-    | RemoveFileClicked
-    | ZoneRecieved Time.Zone
-    | TodayRecieved Date
-    | FormMsg FormMsg
 
 
-type FormMsg
+type FileParsingInProgressMsg
+    = FileParsed (Result Decode.Error (List.Grouped Review))
+
+
+type FileParsingSuccessMsg
     = StartDatePickerMsg DatePicker.Msg
     | EndDatePickerMsg DatePicker.Msg
     | LimitChanged String
@@ -133,201 +156,346 @@ type FormMsg
     | ShowClicked
 
 
+parseFileContent : String -> Result Decode.Error (List.Grouped Review)
+parseFileContent ndJsonString =
+    ndJsonString
+        -- when loading the file "\n"
+        -- was always inserted at the end of the file
+        -- don't know why but hence the trim
+        |> String.trim
+        |> String.lines
+        |> List.map (Decode.decodeString Review.decoder)
+        |> Result.combine
+        |> Result.map (List.groupEqualsBy .productID)
+
+
 update : Msg -> Model -> Return Msg Model
-update msg ({ queryForm } as model) =
-    case msg of
-        ZoneRecieved zone ->
-            { model | zone = Just zone }
+update beforeInitMsg beforeInitModel =
+    case ( beforeInitModel, beforeInitMsg ) of
+        ( LoadingGlobalData, GlobalDataRecieved initData ) ->
+            GlobalDataLoaded initData FileNotUploaded
                 |> Return.singleton
 
-        TodayRecieved today ->
-            { model
-                | queryForm =
-                    { queryForm
-                        | start =
-                            queryForm.start
-                                |> DatePicker.setToday today
-                        , end =
-                            queryForm.end
-                                |> DatePicker.setToday today
-                    }
-            }
-                |> Return.singleton
+        ( LoadingGlobalData, _ ) ->
+            Return.singleton beforeInitModel
 
-        UploadFileClicked ->
-            Return.return model
-                (Select.file [ "application/x-ndjson" ] FileUploaded)
+        ( GlobalDataLoaded initData model, GlobalDataLoadedMsg msg ) ->
+            Return.mapBoth GlobalDataLoadedMsg
+                (GlobalDataLoaded initData)
+                (case ( model, msg ) of
+                    ( FileNotUploaded, FileNotUploadedMsg fileNotUploadedMsg ) ->
+                        case fileNotUploadedMsg of
+                            UploadFileClicked ->
+                                Return.return model
+                                    (Select.file [ "application/x-ndjson" ] (FileUploaded >> FileNotUploadedMsg))
 
-        FileUploaded file ->
-            Return.return model
-                (Task.perform (FileExtracted <| File.name file) (File.toString file))
+                            FileUploaded file ->
+                                Return.return (FileParsingInProgress { fileName = File.name file })
+                                    (Task.perform
+                                        (FileParsed >> FileParsingInProgressMsg)
+                                        (File.toString file
+                                            |> Task.map parseFileContent
+                                        )
+                                    )
 
-        FileExtracted fileName ndJsonString ->
-            { model
-                | reviewsFile =
-                    Just
-                        { name = fileName
-                        , content =
-                            ndJsonString
-                                -- when loading the file "\n"
-                                -- was always inserted at the end of the file
-                                -- don't know why but hence the trim
-                                |> String.trim
-                                |> String.lines
-                                |> List.map (Decode.decodeString Review.decoder)
-                                |> Result.combine
-                                |> Result.map (List.groupEqualsBy .productID)
-                        }
-            }
-                |> Return.singleton
+                    ( FileNotUploaded, _ ) ->
+                        Return.singleton model
 
-        RemoveFileClicked ->
-            { model | reviewsFile = Nothing }
-                |> Return.singleton
+                    ( FileParsingInProgress { fileName }, FileParsingInProgressMsg fileParsingInProgressMsg ) ->
+                        case fileParsingInProgressMsg of
+                            FileParsed parsedFileResult ->
+                                Result.unpack FileParsingFailed
+                                    (\parsedFile ->
+                                        FileParsingSuccess
+                                            { fileName = fileName
+                                            , groupedReviews = parsedFile
+                                            , queryForm =
+                                                { start =
+                                                    DatePicker.initWithoutToday
+                                                        |> DatePicker.setToday initData.today
+                                                , end =
+                                                    DatePicker.initWithoutToday
+                                                        |> DatePicker.setToday initData.today
+                                                , limit = ""
+                                                , minNumberReviews = ""
+                                                }
+                                            , showResponseOrErrors = False
+                                            }
+                                    )
+                                    parsedFileResult
+                                    |> Return.singleton
 
-        FormMsg formMsg ->
-            case formMsg of
-                StartDatePickerMsg datePickerMsg ->
-                    DatePicker.update datePickerMsg queryForm.start
-                        |> Return.mapBoth (StartDatePickerMsg >> FormMsg)
-                            (\newState -> { model | queryForm = { queryForm | start = newState } })
+                    ( FileParsingInProgress _, _ ) ->
+                        Return.singleton model
 
-                EndDatePickerMsg datePickerMsg ->
-                    DatePicker.update datePickerMsg queryForm.end
-                        |> Return.mapBoth (EndDatePickerMsg >> FormMsg)
-                            (\newState -> { model | queryForm = { queryForm | end = newState } })
+                    ( FileParsingSuccess ({ queryForm } as fileParsedModel), FileParsingSuccessMsg formMsg ) ->
+                        Return.map FileParsingSuccess
+                            (case formMsg of
+                                StartDatePickerMsg datePickerMsg ->
+                                    DatePicker.update datePickerMsg queryForm.start
+                                        |> Return.mapBoth (StartDatePickerMsg >> FileParsingSuccessMsg)
+                                            (\newState -> { fileParsedModel | queryForm = { queryForm | start = newState } })
 
-                LimitChanged string ->
-                    { model | queryForm = { queryForm | limit = string } }
-                        |> Return.singleton
+                                EndDatePickerMsg datePickerMsg ->
+                                    DatePicker.update datePickerMsg queryForm.end
+                                        |> Return.mapBoth (EndDatePickerMsg >> FileParsingSuccessMsg)
+                                            (\newState -> { fileParsedModel | queryForm = { queryForm | end = newState } })
 
-                MinNumberReviewsChanged string ->
-                    { model | queryForm = { queryForm | minNumberReviews = string } }
-                        |> Return.singleton
+                                LimitChanged string ->
+                                    { fileParsedModel | queryForm = { queryForm | limit = string } }
+                                        |> Return.singleton
 
-                ShowClicked ->
-                    { model | showResponseOrErrors = True }
-                        |> Return.singleton
+                                MinNumberReviewsChanged string ->
+                                    { fileParsedModel | queryForm = { queryForm | minNumberReviews = string } }
+                                        |> Return.singleton
+
+                                ShowClicked ->
+                                    { fileParsedModel | showResponseOrErrors = True }
+                                        |> Return.singleton
+                            )
+
+                    ( FileParsingSuccess _, _ ) ->
+                        Return.singleton model
+
+                    ( FileParsingFailed _, FileParsingFailedMsg () ) ->
+                        Return.singleton model
+
+                    ( FileParsingFailed _, _ ) ->
+                        Return.singleton model
+                )
+
+        ( GlobalDataLoaded initData model, _ ) ->
+            Return.singleton beforeInitModel
 
 
 view : Model -> Html Msg
 view model =
     E.layout []
-        (E.column [ E.centerX, E.spacing 10, E.padding 40 ]
-            [ Maybe.unwrap
-                (Button.view
-                    (Button.default "Upload Reviews"
-                        |> Button.onClick UploadFileClicked
-                    )
-                )
-                (\{ name, content } ->
-                    Result.unpack (\parsingError -> E.text <| "Error parsing file: " ++ Decode.errorToString parsingError)
-                        (\groupedReviews ->
+        ((case model of
+            LoadingGlobalData ->
+                -- should be instant
+                E.none
+
+            GlobalDataLoaded { zone } subModel ->
+                E.el [ E.centerX, E.spacing 10, E.padding 40 ]
+                    (case subModel of
+                        FileNotUploaded ->
+                            Button.view
+                                (Button.default "Upload Reviews"
+                                    |> Button.onClick UploadFileClicked
+                                )
+                                |> E.map FileNotUploadedMsg
+
+                        FileParsingInProgress { fileName } ->
+                            E.text <| ".. Parsing " ++ fileName ++ " .."
+
+                        FileParsingSuccess { groupedReviews, queryForm, showResponseOrErrors } ->
                             let
                                 validatedQuery : Validate.ValidatedRecord String Query
                                 validatedQuery =
-                                    validateQuery model.queryForm
+                                    validateQuery queryForm
                             in
                             E.column [ E.spacing 42 ]
-                                [ E.row [ E.spacing 10 ]
-                                    [ E.text name
-                                    , Button.view
-                                        (Button.default "X"
-                                            |> Button.onClick RemoveFileClicked
-                                        )
-                                        |> E.el [ E.htmlAttribute <| HtmlAttributes.title "Remove file" ]
-                                    ]
-                                , DatePicker.view
+                                [ DatePicker.view
                                     (DatePicker.default
                                         { label = "Pick a starting date" }
                                     )
-                                    model.queryForm.start
-                                    |> E.map (StartDatePickerMsg >> FormMsg)
-                                    |> WithError.error (Validate.getFieldErrorIf model.showResponseOrErrors 0 validatedQuery)
+                                    queryForm.start
+                                    |> E.map StartDatePickerMsg
+                                    |> WithError.error (Validate.getFieldErrorIf showResponseOrErrors 0 validatedQuery)
                                 , DatePicker.view
                                     (DatePicker.default
                                         { label = "Pick an ending date" }
                                     )
-                                    model.queryForm.end
-                                    |> E.map (EndDatePickerMsg >> FormMsg)
-                                    |> WithError.error (Validate.getFieldErrorIf model.showResponseOrErrors 1 validatedQuery)
+                                    queryForm.end
+                                    |> E.map EndDatePickerMsg
+                                    |> WithError.error (Validate.getFieldErrorIf showResponseOrErrors 1 validatedQuery)
                                 , Input.view
                                     (Input.default
                                         { onChange = LimitChanged
-                                        , text = model.queryForm.limit
+                                        , text = queryForm.limit
                                         , label = "Number of results to show"
                                         }
                                     )
-                                    |> E.map FormMsg
-                                    |> WithError.error (Validate.getFieldErrorIf model.showResponseOrErrors 2 validatedQuery)
+                                    |> WithError.error (Validate.getFieldErrorIf showResponseOrErrors 2 validatedQuery)
                                 , Input.view
                                     (Input.default
                                         { onChange = MinNumberReviewsChanged
-                                        , text = model.queryForm.minNumberReviews
+                                        , text = queryForm.minNumberReviews
                                         , label = "Minimun number of reviews"
                                         }
                                     )
-                                    |> E.map FormMsg
-                                    |> WithError.error (Validate.getFieldErrorIf model.showResponseOrErrors 3 validatedQuery)
+                                    |> WithError.error (Validate.getFieldErrorIf showResponseOrErrors 3 validatedQuery)
                                 , Button.view
                                     (Button.default "Show"
                                         |> Button.onClick ShowClicked
                                     )
-                                    |> E.map FormMsg
                                     |> E.el [ E.alignRight ]
-                                , if model.showResponseOrErrors then
+                                , if showResponseOrErrors then
                                     Result.unwrap E.none
                                         (\query ->
-                                            -- task to get zone never fails so we can show E.none on fail as it never happens
-                                            Maybe.unwrap E.none
-                                                (\zone ->
-                                                    groupedReviews
-                                                        |> List.filterGroupMembers
-                                                            (\review ->
-                                                                Date.isBetween
-                                                                    query.start
-                                                                    query.end
-                                                                    (Date.fromPosix zone review.time)
-                                                            )
-                                                        |> List.filter
-                                                            (\group ->
-                                                                NonemptyList.length group >= query.minNumberReviews
-                                                            )
-                                                        |> List.map
-                                                            (\group ->
-                                                                let
-                                                                    ratingAverage : Float
-                                                                    ratingAverage =
-                                                                        group
-                                                                            |> NonemptyList.map .rating
-                                                                            |> Rating.average
-                                                                in
-                                                                { ratingAverage = ratingAverage, productID = (NonemptyList.head group).productID }
-                                                            )
-                                                        -- not sure which sorting algorithm
-                                                        -- elm uses by default
-                                                        -- but we probably could
-                                                        -- make this more efficient for small limits
-                                                        -- by folding the list and keeping
-                                                        -- track only of the highes N rating averages in the accumulator
-                                                        -- (N = limit)
-                                                        |> List.sortBy .ratingAverage
-                                                        |> List.take query.limit
-                                                        |> viewResults
-                                                )
-                                                model.zone
+                                            groupedReviews
+                                                |> List.filterGroupMembers
+                                                    (\review ->
+                                                        Date.isBetween
+                                                            query.start
+                                                            query.end
+                                                            (Date.fromPosix zone review.time)
+                                                    )
+                                                |> List.filter
+                                                    (\group ->
+                                                        NonemptyList.length group >= query.minNumberReviews
+                                                    )
+                                                |> List.map
+                                                    (\group ->
+                                                        let
+                                                            ratingAverage : Float
+                                                            ratingAverage =
+                                                                group
+                                                                    |> NonemptyList.map .rating
+                                                                    |> Rating.average
+                                                        in
+                                                        { ratingAverage = ratingAverage, productID = (NonemptyList.head group).productID }
+                                                    )
+                                                -- not sure which sorting algorithm
+                                                -- elm uses by default
+                                                -- but we probably could
+                                                -- make this more efficient for small limits
+                                                -- by folding the list and keeping
+                                                -- track only of the highes N rating averages in the accumulator
+                                                -- (N = limit)
+                                                |> List.sortBy .ratingAverage
+                                                |> List.take query.limit
+                                                |> viewResults
                                         )
                                         validatedQuery
 
                                   else
                                     E.none
                                 ]
-                        )
-                        content
-                )
-                model.reviewsFile
-            ]
+                                |> E.map FileParsingSuccessMsg
+
+                        FileParsingFailed decodeError ->
+                            E.text <| "Error parsing file: " ++ Decode.errorToString decodeError
+                    )
+         )
+            |> E.map GlobalDataLoadedMsg
         )
+
+
+
+--     (E.column [ E.centerX, E.spacing 10, E.padding 40 ]
+--         [ Maybe.unwrap
+--             (Button.view
+--                 (Button.default "Upload Reviews"
+--                     |> Button.onClick UploadFileClicked
+--                 )
+--             )
+--             (\{ name, content } ->
+--                 Result.unpack (\parsingError -> E.text <| "Error parsing file: " ++ Decode.errorToString parsingError)
+--                     (\groupedReviews ->
+--                         let
+--                             validatedQuery : Validate.ValidatedRecord String Query
+--                             validatedQuery =
+--                                 validateQuery model.queryForm
+--                         in
+--                         E.column [ E.spacing 42 ]
+--                             [
+--                                  Button.view
+--                                     (Button.default "X"
+--                                         |> Button.onClick RemoveFileClicked
+--                                     )
+--                                     |> E.el [ E.htmlAttribute <| HtmlAttributes.title "Remove file" ]
+--                             , DatePicker.view
+--                                 (DatePicker.default
+--                                     { label = "Pick a starting date" }
+--                                 )
+--                                 model.queryForm.start
+--                                 |> E.map (StartDatePickerMsg >> FormMsg)
+--                                 |> WithError.error (Validate.getFieldErrorIf model.showResponseOrErrors 0 validatedQuery)
+--                             , DatePicker.view
+--                                 (DatePicker.default
+--                                     { label = "Pick an ending date" }
+--                                 )
+--                                 model.queryForm.end
+--                                 |> E.map (EndDatePickerMsg >> FormMsg)
+--                                 |> WithError.error (Validate.getFieldErrorIf model.showResponseOrErrors 1 validatedQuery)
+--                             , Input.view
+--                                 (Input.default
+--                                     { onChange = LimitChanged
+--                                     , text = model.queryForm.limit
+--                                     , label = "Number of results to show"
+--                                     }
+--                                 )
+--                                 |> E.map FormMsg
+--                                 |> WithError.error (Validate.getFieldErrorIf model.showResponseOrErrors 2 validatedQuery)
+--                             , Input.view
+--                                 (Input.default
+--                                     { onChange = MinNumberReviewsChanged
+--                                     , text = model.queryForm.minNumberReviews
+--                                     , label = "Minimun number of reviews"
+--                                     }
+--                                 )
+--                                 |> E.map FormMsg
+--                                 |> WithError.error (Validate.getFieldErrorIf model.showResponseOrErrors 3 validatedQuery)
+--                             , Button.view
+--                                 (Button.default "Show"
+--                                     |> Button.onClick ShowClicked
+--                                 )
+--                                 |> E.map FormMsg
+--                                 |> E.el [ E.alignRight ]
+--                             , if model.showResponseOrErrors then
+--                                 Result.unwrap E.none
+--                                     (\query ->
+--                                         -- task to get zone never fails so we can show E.none on fail as it never happens
+--                                         Maybe.unwrap E.none
+--                                             (\zone ->
+--                                                 groupedReviews
+--                                                     |> List.filterGroupMembers
+--                                                         (\review ->
+--                                                             Date.isBetween
+--                                                                 query.start
+--                                                                 query.end
+--                                                                 (Date.fromPosix zone review.time)
+--                                                         )
+--                                                     |> List.filter
+--                                                         (\group ->
+--                                                             NonemptyList.length group >= query.minNumberReviews
+--                                                         )
+--                                                     |> List.map
+--                                                         (\group ->
+--                                                             let
+--                                                                 ratingAverage : Float
+--                                                                 ratingAverage =
+--                                                                     group
+--                                                                         |> NonemptyList.map .rating
+--                                                                         |> Rating.average
+--                                                             in
+--                                                             { ratingAverage = ratingAverage, productID = (NonemptyList.head group).productID }
+--                                                         )
+--                                                     -- not sure which sorting algorithm
+--                                                     -- elm uses by default
+--                                                     -- but we probably could
+--                                                     -- make this more efficient for small limits
+--                                                     -- by folding the list and keeping
+--                                                     -- track only of the highes N rating averages in the accumulator
+--                                                     -- (N = limit)
+--                                                     |> List.sortBy .ratingAverage
+--                                                     |> List.take query.limit
+--                                                     |> viewResults
+--                                             )
+--                                             model.zone
+--                                     )
+--                                     validatedQuery
+--                               else
+--                                 E.none
+--                             ]
+--                     )
+--                     content
+--             )
+--             model.reviewsFile
+--         ]
+--     )
 
 
 viewResults : List { ratingAverage : Float, productID : Product.Id } -> Element msg
