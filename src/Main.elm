@@ -37,7 +37,7 @@ import Ui.WithError as WithError
 
 type Model
     = LoadingGlobalData
-    | GlobalDataLoaded GlobalData GlobalDataLoaded
+    | GlobalDataLoadedModel GlobalData GlobalDataLoaded
 
 
 type alias GlobalData =
@@ -66,7 +66,7 @@ init : () -> Return Msg Model
 init _ =
     Return.return LoadingGlobalData
         (Task.map2 GlobalData Time.here Date.today
-            |> Task.perform GlobalDataRecieved
+            |> Task.perform GlobalDataLoaded
         )
 
 
@@ -115,15 +115,13 @@ validateQuery =
 
 
 -- UPDATE
--- Messages are divided based on which model's branches' view function
--- they can be fired from
--- Update function is then constructed so that only exactly adimissible
--- model msg combinations are handled (exactly because type error will be thrown if
--- a msg is added to the correspoonding msg branch due to the usages of "_"s i.e. non used parameters)
 
 
+{-| Messages are divided based on which model's branches' view function
+they can be fired from
+-}
 type Msg
-    = GlobalDataRecieved GlobalData
+    = GlobalDataLoaded GlobalData
     | GlobalDataLoadedMsg GlobalDataLoadedMsg
 
 
@@ -166,102 +164,105 @@ parseFileContent ndJsonString =
         |> Result.map (List.groupEqualsBy .productID)
 
 
+{-| Update function is then constructed so that only exactly adimissible
+model-msg combinations are handled (exactly because type error will be thrown if
+a msg is added to the correspoonding msg branch due to the usages of "\_"s i.e. non used parameters)
+-}
 update : Msg -> Model -> Return Msg Model
 update beforeInitMsg beforeInitModel =
     case ( beforeInitModel, beforeInitMsg ) of
-        ( LoadingGlobalData, GlobalDataRecieved initData ) ->
-            GlobalDataLoaded initData FileNotUploaded
+        ( LoadingGlobalData, GlobalDataLoaded initData ) ->
+            GlobalDataLoadedModel initData FileNotUploaded
                 |> Return.singleton
 
         ( LoadingGlobalData, _ ) ->
             Return.singleton beforeInitModel
 
-        ( GlobalDataLoaded initData model, GlobalDataLoadedMsg msg ) ->
-            Return.mapBoth GlobalDataLoadedMsg
-                (GlobalDataLoaded initData)
-                (case ( model, msg ) of
-                    ( FileNotUploaded, FileNotUploadedMsg fileNotUploadedMsg ) ->
-                        case fileNotUploadedMsg of
-                            UploadFileClicked ->
-                                Return.return model
-                                    (Select.file [ "application/x-ndjson" ] (FileUploaded >> FileNotUploadedMsg))
+        ( GlobalDataLoadedModel initData model, GlobalDataLoadedMsg msg ) ->
+            (case ( model, msg ) of
+                ( FileNotUploaded, FileNotUploadedMsg fileNotUploadedMsg ) ->
+                    case fileNotUploadedMsg of
+                        UploadFileClicked ->
+                            Return.return model
+                                (Select.file [ "application/x-ndjson" ] (FileUploaded >> FileNotUploadedMsg))
 
-                            FileUploaded file ->
-                                Return.return (FileParsingInProgress { fileName = File.name file })
-                                    (Task.perform
-                                        (FileParsed >> FileParsingInProgressMsg)
-                                        (File.toString file
-                                            |> Task.map parseFileContent
-                                        )
+                        FileUploaded file ->
+                            Return.return (FileParsingInProgress { fileName = File.name file })
+                                (Task.perform
+                                    (FileParsed >> FileParsingInProgressMsg)
+                                    (File.toString file
+                                        |> Task.map parseFileContent
                                     )
+                                )
 
-                    ( FileNotUploaded, _ ) ->
-                        Return.singleton model
+                ( FileNotUploaded, _ ) ->
+                    Return.singleton model
 
-                    ( FileParsingInProgress { fileName }, FileParsingInProgressMsg fileParsingInProgressMsg ) ->
-                        case fileParsingInProgressMsg of
-                            FileParsed parsedFileResult ->
-                                Result.unpack FileParsingFailed
-                                    (\parsedFile ->
-                                        FileParsingSuccess
-                                            { fileName = fileName
-                                            , groupedReviews = parsedFile
-                                            , queryForm =
-                                                { start =
-                                                    DatePicker.initWithoutToday
-                                                        |> DatePicker.setToday initData.today
-                                                , end =
-                                                    DatePicker.initWithoutToday
-                                                        |> DatePicker.setToday initData.today
-                                                , limit = ""
-                                                , minNumberReviews = ""
-                                                }
-                                            , showResponseOrErrors = False
+                ( FileParsingInProgress { fileName }, FileParsingInProgressMsg fileParsingInProgressMsg ) ->
+                    case fileParsingInProgressMsg of
+                        FileParsed parsedFileResult ->
+                            Result.unpack FileParsingFailed
+                                (\parsedFile ->
+                                    FileParsingSuccess
+                                        { fileName = fileName
+                                        , groupedReviews = parsedFile
+                                        , queryForm =
+                                            { start =
+                                                DatePicker.initWithoutToday
+                                                    |> DatePicker.setToday initData.today
+                                            , end =
+                                                DatePicker.initWithoutToday
+                                                    |> DatePicker.setToday initData.today
+                                            , limit = ""
+                                            , minNumberReviews = ""
                                             }
-                                    )
-                                    parsedFileResult
-                                    |> Return.singleton
+                                        , showResponseOrErrors = False
+                                        }
+                                )
+                                parsedFileResult
+                                |> Return.singleton
 
-                    ( FileParsingInProgress _, _ ) ->
-                        Return.singleton model
+                ( FileParsingInProgress _, _ ) ->
+                    Return.singleton model
 
-                    ( FileParsingSuccess ({ queryForm } as fileParsedModel), FileParsingSuccessMsg formMsg ) ->
-                        Return.map FileParsingSuccess
-                            (case formMsg of
-                                StartDatePickerMsg datePickerMsg ->
-                                    DatePicker.update datePickerMsg queryForm.start
-                                        |> Return.mapBoth (StartDatePickerMsg >> FileParsingSuccessMsg)
-                                            (\newState -> { fileParsedModel | queryForm = { queryForm | start = newState } })
+                ( FileParsingSuccess ({ queryForm } as fileParsedModel), FileParsingSuccessMsg formMsg ) ->
+                    (case formMsg of
+                        StartDatePickerMsg datePickerMsg ->
+                            DatePicker.update datePickerMsg queryForm.start
+                                |> Return.mapBoth (StartDatePickerMsg >> FileParsingSuccessMsg)
+                                    (\newState -> { fileParsedModel | queryForm = { queryForm | start = newState } })
 
-                                EndDatePickerMsg datePickerMsg ->
-                                    DatePicker.update datePickerMsg queryForm.end
-                                        |> Return.mapBoth (EndDatePickerMsg >> FileParsingSuccessMsg)
-                                            (\newState -> { fileParsedModel | queryForm = { queryForm | end = newState } })
+                        EndDatePickerMsg datePickerMsg ->
+                            DatePicker.update datePickerMsg queryForm.end
+                                |> Return.mapBoth (EndDatePickerMsg >> FileParsingSuccessMsg)
+                                    (\newState -> { fileParsedModel | queryForm = { queryForm | end = newState } })
 
-                                LimitChanged string ->
-                                    { fileParsedModel | queryForm = { queryForm | limit = string } }
-                                        |> Return.singleton
+                        LimitChanged string ->
+                            { fileParsedModel | queryForm = { queryForm | limit = string } }
+                                |> Return.singleton
 
-                                MinNumberReviewsChanged string ->
-                                    { fileParsedModel | queryForm = { queryForm | minNumberReviews = string } }
-                                        |> Return.singleton
+                        MinNumberReviewsChanged string ->
+                            { fileParsedModel | queryForm = { queryForm | minNumberReviews = string } }
+                                |> Return.singleton
 
-                                ShowClicked ->
-                                    { fileParsedModel | showResponseOrErrors = True }
-                                        |> Return.singleton
-                            )
+                        ShowClicked ->
+                            { fileParsedModel | showResponseOrErrors = True }
+                                |> Return.singleton
+                    )
+                        |> Return.map FileParsingSuccess
 
-                    ( FileParsingSuccess _, _ ) ->
-                        Return.singleton model
+                ( FileParsingSuccess _, _ ) ->
+                    Return.singleton model
 
-                    ( FileParsingFailed _, FileParsingFailedMsg () ) ->
-                        Return.singleton model
+                ( FileParsingFailed _, FileParsingFailedMsg () ) ->
+                    Return.singleton model
 
-                    ( FileParsingFailed _, _ ) ->
-                        Return.singleton model
-                )
+                ( FileParsingFailed _, _ ) ->
+                    Return.singleton model
+            )
+                |> Return.mapBoth GlobalDataLoadedMsg (GlobalDataLoadedModel initData)
 
-        ( GlobalDataLoaded initData model, _ ) ->
+        ( GlobalDataLoadedModel initData model, _ ) ->
             Return.singleton beforeInitModel
 
 
@@ -273,7 +274,7 @@ view model =
                 -- should be instant
                 E.none
 
-            GlobalDataLoaded { zone } subModel ->
+            GlobalDataLoadedModel { zone } subModel ->
                 E.el [ E.centerX, E.spacing 10, E.padding 40 ]
                     (case subModel of
                         FileNotUploaded ->
