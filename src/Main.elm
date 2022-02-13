@@ -131,12 +131,9 @@ type GlobalDataLoadedMsg
     = FileNotUploadedMsg FileNotUploadedMsg
     | FileParsingInProgressMsg FileParsingInProgressMsg
     | FileParsingSuccessMsg FileParsingSuccessMsg
+      -- when () replaced by sum type the pattern match in the update function will throw error
+      -- so you have to fill in the implementation
     | FileParsingFailedMsg ()
-
-
-
--- when () replaced by sum type the pattern match in the update function will throw error
--- so you have to fill in the implementation
 
 
 type FileNotUploadedMsg
